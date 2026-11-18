@@ -1,0 +1,16 @@
+apiVersion: asset.sap/v1
+kind: Asset
+type: mcp-server
+
+metadata:
+  name: sap-s4-sales-order-srv-mcp-server
+  description: Exposes SAP S/4HANA Sales Order OData API (API_SALES_ORDER_SRV) as read-only MCP tools for order header, line items, schedule lines, and partner data retrieval.
+  version: "1.0.0"
+  translation: mcp-translation/translation.json
+  apiSpec: mcp-translation/api-spec.edmx
+
+provides:
+  apis:
+    - name: sap-s4-sales-order-srv-mcp-server
+      kind: mcp-server
+      ordId: customer.build:apiResource:sales-order-retrieval-3d781.sap-s4-sales-order-srv-mcp-server:v1

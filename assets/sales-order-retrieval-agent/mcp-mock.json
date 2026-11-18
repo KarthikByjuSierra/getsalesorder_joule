@@ -1,0 +1,489 @@
+{
+  "servers": {
+    "sap-s4-sales-order-srv": {
+      "mcp_server_name": "customer.build/sales-order-retrieval-3d781.sap-s4-sales-order-srv-mcp-server",
+      "description": "Exposes SAP S/4HANA Sales Order OData API (API_SALES_ORDER_SRV) as read-only MCP tools for order header, line items, schedule lines, and partner data retrieval.",
+      "tools": {
+        "get_metadata_api_sales_order_srv": {
+          "description": "Get metadata of the OData service with optional filtering to reduce token consumption.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "entitySetName": {
+                "type": "string",
+                "description": "Filter metadata by entity set name"
+              }
+            },
+            "required": []
+          },
+          "mock_response": "<?xml version=\"1.0\" encoding=\"utf-8\"?><edmx:Edmx Version=\"1.0\"><edmx:DataServices><Schema Namespace=\"API_SALES_ORDER_SRV\"><EntityType Name=\"A_SalesOrderType\"><Key><PropertyRef Name=\"SalesOrder\"/></Key><Property Name=\"SalesOrder\" Type=\"Edm.String\"/><Property Name=\"SalesOrderDate\" Type=\"Edm.DateTime\"/><Property Name=\"OverallSDProcessStatus\" Type=\"Edm.String\"/><Property Name=\"SoldToParty\" Type=\"Edm.String\"/><Property Name=\"TotalNetAmount\" Type=\"Edm.Decimal\"/></EntityType></Schema></edmx:DataServices></edmx:Edmx>"
+        },
+        "batch_for_api_sales_order_srv": {
+          "description": "Execute multiple OData operations in a single batch request.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "Array of batch requests"
+              }
+            },
+            "required": ["requests"]
+          },
+          "mock_response": {
+            "responses": []
+          }
+        },
+        "list_a_salesorder_for_api_sales_order_srv": {
+          "description": "Retrieve a list of entities from the A_SalesOrder collection.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "OData $filter expression"
+              },
+              "select": {
+                "type": "string",
+                "description": "Comma-separated list of fields to select"
+              },
+              "orderby": {
+                "type": "string",
+                "description": "OData $orderby expression"
+              },
+              "top": {
+                "type": "string",
+                "description": "Maximum number of records to return"
+              },
+              "skip": {
+                "type": "string",
+                "description": "Number of records to skip"
+              },
+              "expand": {
+                "type": "string",
+                "description": "Comma-separated list of navigation properties to expand"
+              },
+              "inlinecount": {
+                "type": "string",
+                "description": "Include inline count in response"
+              }
+            },
+            "required": []
+          },
+          "mock_response": {
+            "results": [
+              {
+                "SalesOrder": "0000012345",
+                "SalesOrderDate": "/Date(1748217600000)/",
+                "SalesOrderType": "OR",
+                "SoldToParty": "CUST001",
+                "TotalNetAmount": "75000.00",
+                "TransactionCurrency": "USD",
+                "OverallSDProcessStatus": "B",
+                "OverallDeliveryStatus": "A",
+                "OverallBillingStatus": "B",
+                "PurchaseOrderByCustomer": "PO-98765",
+                "RequestedDeliveryDate": "/Date(1748908800000)/"
+              },
+              {
+                "SalesOrder": "0000012346",
+                "SalesOrderDate": "/Date(1748131200000)/",
+                "SalesOrderType": "OR",
+                "SoldToParty": "CUST001",
+                "TotalNetAmount": "12500.00",
+                "TransactionCurrency": "USD",
+                "OverallSDProcessStatus": "C",
+                "OverallDeliveryStatus": "C",
+                "OverallBillingStatus": "C",
+                "PurchaseOrderByCustomer": "PO-98766",
+                "RequestedDeliveryDate": "/Date(1748822400000)/"
+              }
+            ]
+          }
+        },
+        "get_a_salesorder_for_api_sales_order_srv": {
+          "description": "Retrieve a single sales order by its key.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "salesorder": {
+                "type": "string",
+                "description": "Sales order number"
+              },
+              "select": {
+                "type": "string",
+                "description": "Comma-separated list of fields to select"
+              },
+              "expand": {
+                "type": "string",
+                "description": "Navigation properties to expand"
+              }
+            },
+            "required": ["salesorder"]
+          },
+          "mock_response": {
+            "SalesOrder": "0000012345",
+            "SalesOrderDate": "/Date(1748217600000)/",
+            "SalesOrderType": "OR",
+            "SoldToParty": "CUST001",
+            "TotalNetAmount": "75000.00",
+            "TransactionCurrency": "USD",
+            "OverallSDProcessStatus": "B",
+            "OverallDeliveryStatus": "A",
+            "OverallBillingStatus": "B",
+            "PurchaseOrderByCustomer": "PO-98765",
+            "RequestedDeliveryDate": "/Date(1748908800000)/",
+            "SalesOrganization": "1000",
+            "DistributionChannel": "10",
+            "OrganizationDivision": "00"
+          }
+        },
+        "count_a_salesorder_for_api_sales_order_srv": {
+          "description": "Get the total count of sales orders.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "OData $filter expression"
+              }
+            },
+            "required": []
+          },
+          "mock_response": 42
+        },
+        "list_a_salesorderitem_for_api_sales_order_srv": {
+          "description": "Retrieve a list of sales order items.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "OData $filter expression (e.g. SalesOrder eq '0000012345')"
+              },
+              "select": {
+                "type": "string",
+                "description": "Comma-separated list of fields to select"
+              },
+              "top": {
+                "type": "string",
+                "description": "Maximum number of records to return"
+              },
+              "skip": {
+                "type": "string",
+                "description": "Number of records to skip"
+              },
+              "expand": {
+                "type": "string",
+                "description": "Navigation properties to expand"
+              }
+            },
+            "required": []
+          },
+          "mock_response": {
+            "results": [
+              {
+                "SalesOrder": "0000012345",
+                "SalesOrderItem": "000010",
+                "Material": "MAT-001",
+                "SalesOrderItemText": "Industrial Pump Model A",
+                "RequestedQuantity": "5",
+                "RequestedQuantityUnit": "EA",
+                "NetAmount": "50000.00",
+                "TransactionCurrency": "USD",
+                "ItemDeliveryStatus": "A",
+                "ItemBillingStatus": "B"
+              },
+              {
+                "SalesOrder": "0000012345",
+                "SalesOrderItem": "000020",
+                "Material": "MAT-002",
+                "SalesOrderItemText": "Spare Parts Kit",
+                "RequestedQuantity": "10",
+                "RequestedQuantityUnit": "EA",
+                "NetAmount": "25000.00",
+                "TransactionCurrency": "USD",
+                "ItemDeliveryStatus": "A",
+                "ItemBillingStatus": "A"
+              }
+            ]
+          }
+        },
+        "get_a_salesorderitem_for_api_sales_order_srv": {
+          "description": "Retrieve a single sales order item by its key.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "salesorder": {
+                "type": "string",
+                "description": "Sales order number"
+              },
+              "salesorderitem": {
+                "type": "string",
+                "description": "Sales order item number"
+              },
+              "select": {
+                "type": "string",
+                "description": "Fields to select"
+              },
+              "expand": {
+                "type": "string",
+                "description": "Navigation properties to expand"
+              }
+            },
+            "required": ["salesorder", "salesorderitem"]
+          },
+          "mock_response": {
+            "SalesOrder": "0000012345",
+            "SalesOrderItem": "000010",
+            "Material": "MAT-001",
+            "SalesOrderItemText": "Industrial Pump Model A",
+            "RequestedQuantity": "5",
+            "RequestedQuantityUnit": "EA",
+            "NetAmount": "50000.00",
+            "TransactionCurrency": "USD"
+          }
+        },
+        "count_a_salesorderitem_for_api_sales_order_srv": {
+          "description": "Get count of sales order items.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {"type": "string", "description": "OData $filter expression"}
+            },
+            "required": []
+          },
+          "mock_response": 2
+        },
+        "list_a_salesorderscheduleline_for_api_sales_order_srv": {
+          "description": "Retrieve a list of sales order schedule lines.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "OData $filter expression (e.g. SalesOrder eq '0000012345')"
+              },
+              "select": {
+                "type": "string",
+                "description": "Fields to select"
+              },
+              "top": {
+                "type": "string",
+                "description": "Maximum records to return"
+              },
+              "expand": {
+                "type": "string",
+                "description": "Navigation properties to expand"
+              }
+            },
+            "required": []
+          },
+          "mock_response": {
+            "results": [
+              {
+                "SalesOrder": "0000012345",
+                "SalesOrderItem": "000010",
+                "ScheduleLine": "0001",
+                "RequestedDeliveryDate": "/Date(1748908800000)/",
+                "ConfirmedDeliveryDate": "/Date(1748908800000)/",
+                "ScheduleLineOrderQuantity": "5",
+                "ConfdOrderQtyByMatlAvailChk": "5"
+              },
+              {
+                "SalesOrder": "0000012345",
+                "SalesOrderItem": "000020",
+                "ScheduleLine": "0001",
+                "RequestedDeliveryDate": "/Date(1748908800000)/",
+                "ConfirmedDeliveryDate": "/Date(1749513600000)/",
+                "ScheduleLineOrderQuantity": "10",
+                "ConfdOrderQtyByMatlAvailChk": "10"
+              }
+            ]
+          }
+        },
+        "get_a_salesorderscheduleline_for_api_sales_order_srv": {
+          "description": "Retrieve a single sales order schedule line by its key.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "salesorder": {
+                "type": "string",
+                "description": "Sales order number"
+              },
+              "salesorderitem": {
+                "type": "string",
+                "description": "Sales order item number"
+              },
+              "scheduleline": {
+                "type": "string",
+                "description": "Schedule line number"
+              },
+              "select": {"type": "string", "description": "Fields to select"},
+              "expand": {"type": "string", "description": "Navigation properties to expand"}
+            },
+            "required": ["salesorder", "salesorderitem", "scheduleline"]
+          },
+          "mock_response": {
+            "SalesOrder": "0000012345",
+            "SalesOrderItem": "000010",
+            "ScheduleLine": "0001",
+            "RequestedDeliveryDate": "/Date(1748908800000)/",
+            "ConfirmedDeliveryDate": "/Date(1748908800000)/",
+            "ScheduleLineOrderQuantity": "5"
+          }
+        },
+        "count_a_salesorderscheduleline_for_api_sales_order_srv": {
+          "description": "Get count of sales order schedule lines.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {"type": "string", "description": "OData $filter expression"}
+            },
+            "required": []
+          },
+          "mock_response": 2
+        },
+        "list_a_salesorderheaderpartner_for_api_sales_order_srv": {
+          "description": "Retrieve a list of sales order header partners.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {"type": "string", "description": "OData $filter expression"},
+              "select": {"type": "string", "description": "Fields to select"},
+              "top": {"type": "string", "description": "Maximum records to return"}
+            },
+            "required": []
+          },
+          "mock_response": {
+            "results": [
+              {
+                "SalesOrder": "0000012345",
+                "PartnerFunction": "AG",
+                "Customer": "CUST001",
+                "ContactPerson": "",
+                "AddressID": "ADDR001"
+              },
+              {
+                "SalesOrder": "0000012345",
+                "PartnerFunction": "WE",
+                "Customer": "CUST001",
+                "ContactPerson": "",
+                "AddressID": "ADDR002"
+              }
+            ]
+          }
+        },
+        "get_a_salesorderheaderpartner_for_api_sales_order_srv": {
+          "description": "Retrieve a single sales order header partner by its key.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "salesorder": {"type": "string", "description": "Sales order number"},
+              "partnerfunction": {"type": "string", "description": "Partner function code"},
+              "select": {"type": "string", "description": "Fields to select"},
+              "expand": {"type": "string", "description": "Navigation properties to expand"}
+            },
+            "required": ["salesorder", "partnerfunction"]
+          },
+          "mock_response": {
+            "SalesOrder": "0000012345",
+            "PartnerFunction": "AG",
+            "Customer": "CUST001",
+            "AddressID": "ADDR001"
+          }
+        },
+        "count_a_salesorderheaderpartner_for_api_sales_order_srv": {
+          "description": "Get count of sales order header partners.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {"type": "string", "description": "OData $filter expression"}
+            },
+            "required": []
+          },
+          "mock_response": 2
+        },
+        "get_a_salesorderbillingplan_for_api_sales_order_srv": {
+          "description": "Retrieve a single sales order billing plan by its key.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "salesorder": {"type": "string", "description": "Sales order number"},
+              "billingplan": {"type": "string", "description": "Billing plan number"},
+              "select": {"type": "string", "description": "Fields to select"},
+              "expand": {"type": "string", "description": "Navigation properties to expand"}
+            },
+            "required": ["salesorder", "billingplan"]
+          },
+          "mock_response": {
+            "SalesOrder": "0000012345",
+            "BillingPlan": "0001",
+            "BillingPlanStartDate": "/Date(1748217600000)/",
+            "BillingPlanType": "01"
+          }
+        },
+        "list_a_salesorderbillingplanitem_for_api_sales_order_srv": {
+          "description": "Retrieve a list of sales order billing plan items.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {"type": "string", "description": "OData $filter expression"},
+              "select": {"type": "string", "description": "Fields to select"},
+              "top": {"type": "string", "description": "Maximum records to return"}
+            },
+            "required": []
+          },
+          "mock_response": {
+            "results": [
+              {
+                "SalesOrder": "0000012345",
+                "BillingPlan": "0001",
+                "BillingPlanItem": "0001",
+                "BillingDate": "/Date(1749513600000)/",
+                "BillingBlockReason": "",
+                "BillingDocumentType": "F2",
+                "BillToParty": "CUST001",
+                "NetAmount": "75000.00",
+                "TransactionCurrency": "USD"
+              }
+            ]
+          }
+        },
+        "get_a_salesorderbillingplanitem_for_api_sales_order_srv": {
+          "description": "Retrieve a single sales order billing plan item by its key.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "salesorder": {"type": "string", "description": "Sales order number"},
+              "billingplan": {"type": "string", "description": "Billing plan number"},
+              "billingplanitem": {"type": "string", "description": "Billing plan item number"},
+              "select": {"type": "string", "description": "Fields to select"},
+              "expand": {"type": "string", "description": "Navigation properties to expand"}
+            },
+            "required": ["salesorder", "billingplan", "billingplanitem"]
+          },
+          "mock_response": {
+            "SalesOrder": "0000012345",
+            "BillingPlan": "0001",
+            "BillingPlanItem": "0001",
+            "BillingDate": "/Date(1749513600000)/",
+            "NetAmount": "75000.00",
+            "TransactionCurrency": "USD",
+            "BillingDocumentType": "F2"
+          }
+        }
+      }
+    }
+  },
+  "metadata": {
+    "version": "1.0.0",
+    "created_for_agent": "sales-order-retrieval-agent",
+    "mock_mode": true,
+    "deterministic": true,
+    "total_servers": 1,
+    "total_tools": 17,
+    "generated_from": ["translation.json"],
+    "generation_date": "2026-11-18"
+  }
+}

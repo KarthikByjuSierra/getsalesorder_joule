@@ -1,0 +1,11 @@
+apiVersion: solution.sap/v1
+kind: Solution
+
+metadata:
+  name: sales-order-retrieval-3d781
+  version: "1.0.0"
+  description: AI agent that retrieves complete sales order details from SAP S/4HANA On-Premise by sales order number or search attributes.
+
+assets:
+  - ref: ./assets/sales-order-retrieval-agent/asset.yaml
+  - ref: ./assets/sap-s4-sales-order-srv-mcp-server/asset.yaml
