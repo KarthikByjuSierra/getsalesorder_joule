@@ -540,29 +540,48 @@ def test_x_destination_name_header_present(monkeypatch):
 
 
 def test_user_token_propagated_to_sdk(monkeypatch):
-    """ConsumptionOptions(user_token=...) must be passed to get_destination()."""
+    """User JWT must be forwarded as Authorization: Bearer header on the proxy request.
+
+    SDK 0.62.0 confirmed: ConsumptionOptions is silently discarded in proxy mode
+    (client.py returns TransparentProxyDestination immediately when proxy_enabled=True).
+    User identity is propagated via proxy_dest.set_header(AUTHORIZATION, "Bearer <jwt>").
+    """
     from unittest.mock import patch, MagicMock
     import tools.s4_odata_client as client_mod
-    from sap_cloud_sdk.destination import ConsumptionOptions
+    from sap_cloud_sdk.destination import (
+        TransparentProxyDestination, TransparentProxy
+    )
 
     monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "conn-proxy.namespace")
 
-    mock_dest = _FakeProxyDest()
+    # Use a real TransparentProxyDestination so set_header() actually works
+    real_proxy_dest = TransparentProxyDestination.from_proxy(
+        "S43", TransparentProxy("conn-proxy", "namespace")
+    )
     mock_sdk_client = MagicMock()
-    mock_sdk_client.get_destination.return_value = mock_dest
+    mock_sdk_client.get_destination.return_value = real_proxy_dest
 
     test_token = "eyJhbGciOiJSUzI1NiJ9.test.token"
+    captured_headers: dict = {}
+
+    def capture_get(url, **kwargs):
+        captured_headers.update(kwargs.get("headers", {}))
+        return _make_mock_response()
 
     with patch.object(client_mod, "create_client", return_value=mock_sdk_client), \
-         patch.object(client_mod._requests, "get", return_value=_make_mock_response()):
+         patch.object(client_mod._requests, "get", side_effect=capture_get):
 
         client_mod._sync_odata_get("S43", "A_SalesOrder", {}, test_token)
 
+    # Authorization: Bearer <jwt> must be present
+    assert "Authorization" in captured_headers, \
+        f"Authorization header missing from proxy request: {captured_headers}"
+    assert captured_headers["Authorization"] == f"Bearer {test_token}", \
+        f"Wrong Authorization value: {captured_headers['Authorization']}"
+    # ConsumptionOptions must NOT be passed to get_destination in proxy mode
     _, kwargs = mock_sdk_client.get_destination.call_args
-    options = kwargs.get("options")
-    assert options is not None, "ConsumptionOptions must be passed when user_token is set"
-    assert isinstance(options, ConsumptionOptions)
-    assert options.user_token == test_token
+    assert kwargs.get("options") is None, \
+        f"ConsumptionOptions must not be passed in proxy mode, got: {kwargs.get('options')}"
 
 
 def test_odata_query_params_forwarded(monkeypatch):

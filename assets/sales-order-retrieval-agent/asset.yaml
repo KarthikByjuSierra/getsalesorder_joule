@@ -30,6 +30,9 @@ requires:
 container:
   buildPath: .
   port: 5000
+  env:
+    - name: PROXY_CONFIG_CHECK
+      value: "container_env_working"
 
 probes:
   startup:

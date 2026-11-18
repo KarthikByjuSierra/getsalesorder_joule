@@ -49,7 +49,7 @@ from typing import Any
 import requests as _requests
 
 from langchain_core.tools import ToolException
-from sap_cloud_sdk.destination import create_client, ConsumptionOptions
+from sap_cloud_sdk.destination import create_client, TransparentProxyHeader
 
 from util import MCP_CALL_TIMEOUT_SECONDS, MCP_MAX_RESPONSE_CHARS, minify_json, truncate_response
 
@@ -84,7 +84,7 @@ def _validate_proxy_configured() -> str:
 
 
 def _resolve_proxy_destination(destination_name: str, user_token: str | None):
-    """Resolve destination S43 via the Transparent Proxy.
+    """Resolve destination via the Transparent Proxy and attach user identity.
 
     Uses create_client(use_default_proxy=True) so the SDK reads
     APPFND_CONHOS_TRANSP_PROXY and returns a TransparentProxyDestination
@@ -93,12 +93,23 @@ def _resolve_proxy_destination(destination_name: str, user_token: str | None):
         proxy_dest.url     → "http://connectivity-proxy.<namespace>"
         proxy_dest.headers → {"X-destination-name": "<destination_name>"}
 
+    SDK behaviour confirmed from source (sap-cloud-sdk 0.62.0, client.py):
+    When proxy_enabled=True, get_destination() returns immediately with
+    TransparentProxyDestination.from_proxy() — ConsumptionOptions is never
+    processed and must NOT be passed. User identity is propagated instead via
+    the Authorization: Bearer <jwt> header on the outbound proxy request,
+    which the Transparent Proxy uses for PrincipalPropagation /
+    OAuth2UserTokenExchange against the destination.
+
     Args:
         destination_name: BTP destination name (case-sensitive, e.g. "S43").
-        user_token: Optional JWT for OAuth2UserTokenExchange / JWT Bearer flows.
+        user_token: Optional JWT. When provided, forwarded as
+                    Authorization: Bearer <jwt> for principal propagation.
+                    Never logged.
 
     Returns:
-        TransparentProxyDestination from the SDK.
+        TransparentProxyDestination from the SDK, with Authorization header
+        already set when user_token is present.
 
     Raises:
         ToolException: If proxy env var is missing, destination is not found,
@@ -109,21 +120,37 @@ def _resolve_proxy_destination(destination_name: str, user_token: str | None):
 
     try:
         # use_default_proxy=True tells the SDK to read APPFND_CONHOS_TRANSP_PROXY
-        # and return TransparentProxyDestination for proxy-enabled lookups
+        # and return TransparentProxyDestination for proxy-enabled lookups.
+        # ConsumptionOptions is intentionally NOT passed — it is silently discarded
+        # by the SDK when proxy_enabled=True (confirmed from client.py source).
         client = create_client(use_default_proxy=True)
-        options = ConsumptionOptions(user_token=user_token) if user_token else None
-
-        # proxy_enabled=True forces the SDK to return a TransparentProxyDestination
-        # rather than a Destination with the virtual host URL
         proxy_dest = client.get_destination(
             destination_name,
-            options=options,
             proxy_enabled=True,
         )
 
         if proxy_dest is None:
             raise ToolException(
                 f"Destination '{destination_name}' not found in BTP Destination Service."
+            )
+
+        # Propagate user identity for PrincipalPropagation / OAuth2UserTokenExchange.
+        # The Transparent Proxy reads Authorization: Bearer <jwt> from the inbound
+        # request and uses it to perform the token exchange against the destination.
+        # The JWT is never logged — only its presence is recorded.
+        if user_token:
+            proxy_dest.set_header(
+                TransparentProxyHeader.AUTHORIZATION,
+                f"Bearer {user_token}",
+            )
+            logger.info(
+                "User JWT attached for principal propagation: destination=%s present=True",
+                destination_name,
+            )
+        else:
+            logger.info(
+                "No user JWT provided: destination=%s present=False",
+                destination_name,
             )
 
         logger.info(
@@ -256,13 +283,18 @@ async def call_odata(
     tunnel selection — no direct TCP connection to the on-premise virtual host
     is made.
 
+    User identity is propagated as Authorization: Bearer <jwt> on the proxy
+    request (not via ConsumptionOptions, which is discarded by the SDK in
+    proxy mode — confirmed from sap-cloud-sdk 0.62.0 client.py source).
+
     Args:
         destination_name: BTP destination name (case-sensitive, e.g. "S43").
         path: OData resource path relative to the service root
               (e.g. "A_SalesOrder", "A_SalesOrder('10')", "A_SalesOrder/$count").
         params: Optional OData query parameters dict
                 ($filter, $select, $expand, $top, $skip, $orderby, $inlinecount, etc.)
-        user_token: Optional JWT token for user-token-exchange auth flows.
+        user_token: Optional JWT for principal propagation / OAuth2UserTokenExchange.
+                    Forwarded as Authorization: Bearer header. Never logged.
 
     Returns:
         Response body as a (possibly truncated) string.

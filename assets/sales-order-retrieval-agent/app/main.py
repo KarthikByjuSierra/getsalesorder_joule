@@ -20,6 +20,19 @@ from mcp_providers.agw import set_user_token, reset_user_token
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Diagnostic: report whether container.env entries reach the runtime.
+# Logs only PRESENT or MISSING — no credential values are ever logged.
+_proxy_config_check = os.environ.get("PROXY_CONFIG_CHECK", "")
+logger.info(
+    "PROXY_CONFIG_CHECK: %s",
+    "PRESENT" if _proxy_config_check else "MISSING",
+)
+_transp_proxy = os.environ.get("APPFND_CONHOS_TRANSP_PROXY", "")
+logger.info(
+    "APPFND_CONHOS_TRANSP_PROXY: %s",
+    "PRESENT" if _transp_proxy else "MISSING",
+)
+
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "5000"))
 

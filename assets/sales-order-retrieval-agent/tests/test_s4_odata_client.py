@@ -1,15 +1,19 @@
 """Tests for app/tools/s4_odata_client.py — Transparent Proxy implementation.
 
-Covers all 9 requirements:
+Covers all 9 requirements (updated for sap-cloud-sdk 0.62.0 proxy mode):
   R1  Proxy configured and destination resolved successfully.
   R2  Proxy environment variable missing → explicit diagnostic ToolException.
   R3  X-destination-name header is present and correct.
-  R4  User-token is passed via ConsumptionOptions to the SDK.
+  R4  User JWT forwarded as Authorization: Bearer <jwt> header (NOT via
+      ConsumptionOptions, which is silently discarded in proxy mode per SDK source).
   R5  OData query parameters are forwarded unchanged to requests.get.
   R6  HTTP 4xx/5xx errors raise ToolException with status code.
   R7  Timeout raises ToolException with timeout duration.
   R8  create_client called with use_default_proxy=True.
   R9  get_destination called with proxy_enabled=True.
+  R10 JWT is never logged.
+  R11 No user_token → Authorization header absent from proxy request.
+  R12 container.env diagnostic variable (PROXY_CONFIG_CHECK) logged at startup.
 
 All tests run under IBD_TESTING=1 (set by conftest.py) for the tool layer.
 The odata_client tests explicitly clear IBD_TESTING to exercise the real
@@ -188,28 +192,39 @@ async def test_r3_x_destination_name_matches_destination_name_arg(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# R4 — User-token propagated via ConsumptionOptions
+# R4 — User JWT forwarded as Authorization: Bearer header on proxy request
+#
+# SDK 0.62.0 confirmed behaviour (client.py source):
+#   get_destination(..., proxy_enabled=True) returns immediately via
+#   TransparentProxyDestination.from_proxy() — ConsumptionOptions is never
+#   processed. User identity must be set via proxy_dest.set_header(
+#   TransparentProxyHeader.AUTHORIZATION, "Bearer <jwt>").
 # ---------------------------------------------------------------------------
 
-async def test_r4_user_token_passed_to_consumption_options(monkeypatch):
-    """R4: user_token is passed to ConsumptionOptions, not hardcoded in headers."""
+async def test_r4_user_token_forwarded_as_authorization_header(monkeypatch):
+    """R4: user_token is set as Authorization: Bearer <jwt> on the proxy destination,
+    NOT passed via ConsumptionOptions (which is discarded in proxy mode)."""
     monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "connectivity-proxy.test-ns")
 
-    proxy_dest = _make_proxy_dest()
+    # Use a real-ish TransparentProxyDestination so set_header() actually mutates headers
+    from sap_cloud_sdk.destination import (
+        TransparentProxyDestination, TransparentProxy, TransparentProxyHeader
+    )
+    real_proxy_dest = TransparentProxyDestination.from_proxy(
+        "S43", TransparentProxy("connectivity-proxy", "test-ns")
+    )
+
     mock_client = MagicMock()
-    mock_client.get_destination.return_value = proxy_dest
+    mock_client.get_destination.return_value = real_proxy_dest
 
-    captured_options = {}
+    captured_headers: dict = {}
 
-    def capture_get_destination(name, options=None, proxy_enabled=False):
-        captured_options["options"] = options
-        captured_options["proxy_enabled"] = proxy_enabled
-        return proxy_dest
-
-    mock_client.get_destination.side_effect = capture_get_destination
+    def capture_get(url, **kwargs):
+        captured_headers.update(kwargs.get("headers", {}))
+        return _make_ok_response()
 
     with patch("tools.s4_odata_client.create_client", return_value=mock_client), \
-         patch("requests.get", return_value=_make_ok_response()):
+         patch("tools.s4_odata_client._requests.get", side_effect=capture_get):
 
         from tools.s4_odata_client import call_odata
         await call_odata(
@@ -218,35 +233,201 @@ async def test_r4_user_token_passed_to_consumption_options(monkeypatch):
             user_token="eyJhbGciOiJSUzI1NiJ9.test_jwt_token",
         )
 
-    options = captured_options.get("options")
-    assert options is not None, "ConsumptionOptions was not passed to get_destination"
-    assert options.user_token == "eyJhbGciOiJSUzI1NiJ9.test_jwt_token", \
-        f"Expected user_token in ConsumptionOptions, got: {options.user_token}"
+    assert "Authorization" in captured_headers, \
+        f"Authorization header missing from proxy request. Headers: {captured_headers}"
+    assert captured_headers["Authorization"] == "Bearer eyJhbGciOiJSUzI1NiJ9.test_jwt_token", \
+        f"Wrong Authorization value: {captured_headers['Authorization']}"
 
 
-async def test_r4_no_user_token_passes_none_options(monkeypatch):
-    """R4: When user_token is None, ConsumptionOptions is not passed (options=None)."""
+async def test_r4_consumption_options_not_passed_to_get_destination(monkeypatch):
+    """R4: ConsumptionOptions is NOT passed to get_destination in proxy mode.
+    Confirmed: SDK discards it silently — passing it is misleading and wrong."""
     monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "connectivity-proxy.test-ns")
 
-    proxy_dest = _make_proxy_dest()
+    from sap_cloud_sdk.destination import (
+        TransparentProxyDestination, TransparentProxy
+    )
+    real_proxy_dest = TransparentProxyDestination.from_proxy(
+        "S43", TransparentProxy("connectivity-proxy", "test-ns")
+    )
+
     mock_client = MagicMock()
+    captured_call_kwargs: dict = {}
 
-    captured_options = {}
-
-    def capture_get_destination(name, options=None, proxy_enabled=False):
-        captured_options["options"] = options
-        return proxy_dest
+    def capture_get_destination(name, **kwargs):
+        captured_call_kwargs.update(kwargs)
+        return real_proxy_dest
 
     mock_client.get_destination.side_effect = capture_get_destination
 
     with patch("tools.s4_odata_client.create_client", return_value=mock_client), \
-         patch("requests.get", return_value=_make_ok_response()):
+         patch("tools.s4_odata_client._requests.get", return_value=_make_ok_response()):
+
+        from tools.s4_odata_client import call_odata
+        await call_odata(
+            destination_name="S43",
+            path="A_SalesOrder",
+            user_token="eyJhbGciOiJSUzI1NiJ9.test_jwt_token",
+        )
+
+    # options must be absent or None — ConsumptionOptions is not applicable in proxy mode
+    options = captured_call_kwargs.get("options")
+    assert options is None, \
+        f"ConsumptionOptions must NOT be passed to get_destination in proxy mode, got: {options}"
+
+
+async def test_r4_no_user_token_no_authorization_header(monkeypatch):
+    """R4: When user_token is None, Authorization header is absent from the proxy request."""
+    monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "connectivity-proxy.test-ns")
+
+    from sap_cloud_sdk.destination import (
+        TransparentProxyDestination, TransparentProxy
+    )
+    real_proxy_dest = TransparentProxyDestination.from_proxy(
+        "S43", TransparentProxy("connectivity-proxy", "test-ns")
+    )
+
+    mock_client = MagicMock()
+    mock_client.get_destination.return_value = real_proxy_dest
+
+    captured_headers: dict = {}
+
+    def capture_get(url, **kwargs):
+        captured_headers.update(kwargs.get("headers", {}))
+        return _make_ok_response()
+
+    with patch("tools.s4_odata_client.create_client", return_value=mock_client), \
+         patch("tools.s4_odata_client._requests.get", side_effect=capture_get):
 
         from tools.s4_odata_client import call_odata
         await call_odata(destination_name="S43", path="A_SalesOrder", user_token=None)
 
-    assert captured_options.get("options") is None, \
-        "ConsumptionOptions should be None when user_token is not provided"
+    assert "Authorization" not in captured_headers, \
+        f"Authorization header should be absent when user_token is None, got: {captured_headers}"
+
+
+# ---------------------------------------------------------------------------
+# R10 — JWT is never logged
+# ---------------------------------------------------------------------------
+
+async def test_r10_jwt_never_logged(monkeypatch, caplog):
+    """R10: The JWT value is never written to any log record."""
+    import logging
+    monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "connectivity-proxy.test-ns")
+
+    from sap_cloud_sdk.destination import (
+        TransparentProxyDestination, TransparentProxy
+    )
+    real_proxy_dest = TransparentProxyDestination.from_proxy(
+        "S43", TransparentProxy("connectivity-proxy", "test-ns")
+    )
+
+    mock_client = MagicMock()
+    mock_client.get_destination.return_value = real_proxy_dest
+
+    secret_jwt = "eyJhbGciOiJSUzI1NiJ9.SECRET_VALUE_MUST_NOT_APPEAR_IN_LOGS"
+
+    with patch("tools.s4_odata_client.create_client", return_value=mock_client), \
+         patch("tools.s4_odata_client._requests.get", return_value=_make_ok_response()), \
+         caplog.at_level(logging.DEBUG, logger="tools.s4_odata_client"):
+
+        from tools.s4_odata_client import call_odata
+        await call_odata(destination_name="S43", path="A_SalesOrder", user_token=secret_jwt)
+
+    # The secret token value must not appear in any log record
+    for record in caplog.records:
+        assert secret_jwt not in record.getMessage(), \
+            f"JWT leaked into log: {record.getMessage()}"
+        assert "SECRET_VALUE_MUST_NOT_APPEAR_IN_LOGS" not in record.getMessage(), \
+            f"JWT leaked into log: {record.getMessage()}"
+
+
+# ---------------------------------------------------------------------------
+# R11 — X-destination-name and proxy URL unaffected by user_token
+# ---------------------------------------------------------------------------
+
+async def test_r11_proxy_destination_intact_with_user_token(monkeypatch):
+    """R11: X-destination-name and proxy URL are preserved when user_token is set."""
+    monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "connectivity-proxy.test-ns")
+
+    from sap_cloud_sdk.destination import (
+        TransparentProxyDestination, TransparentProxy
+    )
+    real_proxy_dest = TransparentProxyDestination.from_proxy(
+        "S43", TransparentProxy("connectivity-proxy", "test-ns")
+    )
+
+    mock_client = MagicMock()
+    mock_client.get_destination.return_value = real_proxy_dest
+
+    captured_url: list = []
+    captured_headers: dict = {}
+
+    def capture_get(url, **kwargs):
+        captured_url.append(url)
+        captured_headers.update(kwargs.get("headers", {}))
+        return _make_ok_response()
+
+    with patch("tools.s4_odata_client.create_client", return_value=mock_client), \
+         patch("tools.s4_odata_client._requests.get", side_effect=capture_get):
+
+        from tools.s4_odata_client import call_odata
+        await call_odata(
+            destination_name="S43",
+            path="A_SalesOrder",
+            user_token="eyJhbGciOiJSUzI1NiJ9.some_token",
+        )
+
+    # Proxy URL intact
+    assert captured_url[0].startswith("http://connectivity-proxy.test-ns"), \
+        f"Unexpected URL: {captured_url[0]}"
+    # X-destination-name intact
+    assert captured_headers.get("X-destination-name") == "S43", \
+        f"X-destination-name wrong: {captured_headers.get('X-destination-name')}"
+    # Authorization header present
+    assert captured_headers.get("Authorization", "").startswith("Bearer "), \
+        f"Authorization header wrong: {captured_headers.get('Authorization')}"
+
+
+# ---------------------------------------------------------------------------
+# R12 — container.env diagnostic: PROXY_CONFIG_CHECK logged at startup
+# ---------------------------------------------------------------------------
+
+def test_r12_proxy_config_check_present_logged(monkeypatch, caplog):
+    """R12: When PROXY_CONFIG_CHECK is set, startup log shows PRESENT."""
+    import logging
+    monkeypatch.setenv("PROXY_CONFIG_CHECK", "container_env_working")
+
+    # Re-execute the startup diagnostic block by importing main in a fresh context
+    import importlib
+    import sys
+    # Remove cached main module so the module-level diagnostic code re-runs
+    sys.modules.pop("main", None)
+
+    with caplog.at_level(logging.INFO, logger="main"):
+        import main  # noqa: F401 — side-effect import triggers startup log
+
+    present_logs = [r.getMessage() for r in caplog.records if "PROXY_CONFIG_CHECK" in r.getMessage()]
+    assert any("PRESENT" in msg for msg in present_logs), \
+        f"Expected PRESENT in startup log. Got: {present_logs}"
+    assert not any("container_env_working" in msg for msg in present_logs), \
+        f"Value must not be logged, only PRESENT/MISSING. Got: {present_logs}"
+
+
+def test_r12_proxy_config_check_missing_logged(monkeypatch, caplog):
+    """R12: When PROXY_CONFIG_CHECK is absent, startup log shows MISSING."""
+    import logging
+    monkeypatch.delenv("PROXY_CONFIG_CHECK", raising=False)
+
+    import sys
+    sys.modules.pop("main", None)
+
+    with caplog.at_level(logging.INFO, logger="main"):
+        import main  # noqa: F401
+
+    present_logs = [r.getMessage() for r in caplog.records if "PROXY_CONFIG_CHECK" in r.getMessage()]
+    assert any("MISSING" in msg for msg in present_logs), \
+        f"Expected MISSING in startup log. Got: {present_logs}"
 
 
 # ---------------------------------------------------------------------------
