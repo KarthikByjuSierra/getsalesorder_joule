@@ -1,16 +1,41 @@
 """Native Python tools for SAP S/4HANA Sales Order OData API (API_SALES_ORDER_SRV).
 
-Implements all 17 operations from the MCP translation.json as LangChain
-StructuredTool instances. Each tool makes an authenticated async OData GET
-request via BTP destination "s43" using the SAP Cloud SDK destination service.
+Implements all 17 operations as LangChain StructuredTool instances. Each tool
+makes an authenticated async OData GET request via BTP destination "S43" through
+the BTP Connectivity Transparent Proxy using SAP Cloud SDK 0.62.0.
 
-No credentials are hardcoded. Authentication is resolved at runtime by the
-BTP Destination Service through the existing "s43" destination configuration.
+Authentication
+--------------
+The user JWT is extracted by JWTContextMiddleware (main.py) and stored in a
+per-request ContextVar via set_user_token(). Each tool reads it via _token() →
+get_user_token() and passes it to call_odata(user_token=...). The client then
+forwards it as "Authorization: Bearer <jwt>" on the proxy request for principal
+propagation / OAuth2UserTokenExchange. No credentials are hardcoded.
 
-Tools implemented (1:1 mapping to translation.json):
+Connectivity
+------------
+All OData calls are routed through the BTP Connectivity Transparent Proxy
+(create_client(use_default_proxy=True)). The proxy pod handles Cloud Connector
+tunnel selection. Direct TCP to the on-premise virtual host is never attempted.
+
+Destination: "S43" (case-sensitive).
+
+Input validation
+----------------
+- $top is clamped to [1, 100]. Negative values raise ToolException.
+- $skip must be non-negative. Negative values raise ToolException.
+- String key values containing apostrophes are escaped per OData V2 convention
+  (single-quote → double-single-quote) before being embedded in URL key predicates.
+
+Batch
+-----
+OData V2 multipart $batch is NOT supported. The batch tool (tool 2) returns an
+explicit "not supported" error. Use individual tools instead.
+
+Tools implemented:
   Metadata / batch:
     1.  get_metadata_api_sales_order_srv
-    2.  batch_for_api_sales_order_srv           (read-only $batch)
+    2.  batch_for_api_sales_order_srv           (unsupported — returns error)
 
   A_SalesOrder:
     3.  list_a_salesorder_for_api_sales_order_srv
@@ -44,7 +69,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, Field
 
 from mcp_providers.agw import get_user_token
@@ -56,8 +81,66 @@ _DEST = "S43"
 
 
 def _token() -> str | None:
-    """Return the per-request user JWT (may be None in IBD_TESTING mode)."""
+    """Return the per-request user JWT from the ContextVar (may be None in IBD_TESTING mode).
+
+    The JWT is set by JWTContextMiddleware for every inbound request.
+    Python's ContextVar is async-task-scoped: concurrent requests each have
+    their own isolated copy — no cross-request token leakage is possible.
+    """
     return get_user_token()
+
+
+def _escape_odata_string(value: str) -> str:
+    """Escape a string value for safe embedding in an OData V2 key predicate.
+
+    OData V2 key predicates wrap string values in single quotes:
+        A_SalesOrder('10')
+    Values that themselves contain single quotes must double them:
+        A_SalesOrder('O''Reilly')   ← the apostrophe in O'Reilly
+
+    Args:
+        value: Raw string value (e.g. from user input or tool argument).
+
+    Returns:
+        Escaped string safe for embedding between single quotes in a key predicate.
+    """
+    return value.replace("'", "''")
+
+
+def _validate_pagination(
+    top: Optional[int],
+    skip: Optional[int],
+) -> tuple[Optional[int], Optional[int]]:
+    """Validate and clamp OData pagination parameters.
+
+    Rules:
+    - $top must be in [1, 100]. Negative values raise ToolException.
+      Zero is clamped to 1 (a $top=0 request is semantically empty).
+      Values > 100 are clamped to 100 to prevent context overflow.
+    - $skip must be non-negative. Negative values raise ToolException.
+
+    Args:
+        top:  Raw $top value from tool input (may be None).
+        skip: Raw $skip value from tool input (may be None).
+
+    Returns:
+        (validated_top, validated_skip) tuple, with clamping applied.
+
+    Raises:
+        ToolException: If top < 0 or skip < 0.
+    """
+    if top is not None:
+        if top < 0:
+            raise ToolException(
+                f"Invalid $top value: {top}. $top must be a non-negative integer."
+            )
+        top = max(1, min(top, 100))
+    if skip is not None:
+        if skip < 0:
+            raise ToolException(
+                f"Invalid $skip value: {skip}. $skip must be a non-negative integer."
+            )
+    return top, skip
 
 
 # ---------------------------------------------------------------------------
@@ -77,22 +160,24 @@ async def _get_metadata(**_kwargs) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 2. Batch (read-only $batch placeholder)
+# 2. Batch (unsupported — OData V2 multipart $batch not implemented)
 # ---------------------------------------------------------------------------
 
 class _BatchInput(BaseModel):
     body: Optional[str] = Field(
         default=None,
-        description="Multipart batch request body. Only read (GET) operations are permitted.",
+        description="Multipart batch request body (not used — batch is not supported).",
     )
 
 
 async def _batch(body: Optional[str] = None, **_kwargs) -> str:
-    # For read-only batch we route individual GETs; full multipart batch is out of scope.
-    return await call_odata(
-        destination_name=_DEST,
-        path="$batch",
-        user_token=_token(),
+    # OData V2 multipart $batch requires constructing a multipart/mixed body with
+    # per-part Content-Type, boundary handling, and response demultiplexing.
+    # This is not implemented. Use the individual entity tools instead.
+    raise ToolException(
+        "OData V2 $batch is not supported by this agent. "
+        "Use the individual entity tools (list_a_salesorder_for_api_sales_order_srv, "
+        "get_a_salesorderitem_for_api_sales_order_srv, etc.) to retrieve data."
     )
 
 
@@ -120,11 +205,12 @@ async def _list_salesorder(
     inlinecount: Optional[str] = None,
     **_kwargs,
 ) -> str:
+    top, skip = _validate_pagination(top, skip)
     params: dict = {"$format": "json"}
     if filter:    params["$filter"] = filter
     if select:    params["$select"] = select
     if orderby:   params["$orderby"] = orderby
-    if top is not None: params["$top"] = str(min(top, 100))
+    if top is not None: params["$top"] = str(top)
     if skip is not None: params["$skip"] = str(skip)
     if expand:    params["$expand"] = expand
     if inlinecount: params["$inlinecount"] = inlinecount
@@ -145,7 +231,8 @@ async def _get_salesorder(salesorder: str, select: Optional[str] = None, expand:
     params: dict = {"$format": "json"}
     if select: params["$select"] = select
     if expand: params["$expand"] = expand
-    return await call_odata(destination_name=_DEST, path=f"A_SalesOrder('{salesorder}')", params=params, user_token=_token())
+    key = _escape_odata_string(salesorder)
+    return await call_odata(destination_name=_DEST, path=f"A_SalesOrder('{key}')", params=params, user_token=_token())
 
 
 # ---------------------------------------------------------------------------
@@ -177,9 +264,11 @@ async def _get_billingplan(salesorder: str, billingplan: str, select: Optional[s
     params: dict = {"$format": "json"}
     if select: params["$select"] = select
     if expand: params["$expand"] = expand
+    so = _escape_odata_string(salesorder)
+    bp = _escape_odata_string(billingplan)
     return await call_odata(
         destination_name=_DEST,
-        path=f"A_SalesOrderBillingPlan(SalesOrder='{salesorder}',BillingPlan='{billingplan}')",
+        path=f"A_SalesOrderBillingPlan(SalesOrder='{so}',BillingPlan='{bp}')",
         params=params,
         user_token=_token(),
     )
@@ -209,11 +298,12 @@ async def _list_billingplanitem(
     inlinecount: Optional[str] = None,
     **_kwargs,
 ) -> str:
+    top, skip = _validate_pagination(top, skip)
     params: dict = {"$format": "json"}
     if filter:    params["$filter"] = filter
     if select:    params["$select"] = select
     if orderby:   params["$orderby"] = orderby
-    if top is not None: params["$top"] = str(min(top, 100))
+    if top is not None: params["$top"] = str(top)
     if skip is not None: params["$skip"] = str(skip)
     if expand:    params["$expand"] = expand
     if inlinecount: params["$inlinecount"] = inlinecount
@@ -236,9 +326,12 @@ async def _get_billingplanitem(salesorder: str, billingplan: str, billingplanite
     params: dict = {"$format": "json"}
     if select: params["$select"] = select
     if expand: params["$expand"] = expand
+    so = _escape_odata_string(salesorder)
+    bp = _escape_odata_string(billingplan)
+    bpi = _escape_odata_string(billingplanitem)
     return await call_odata(
         destination_name=_DEST,
-        path=f"A_SalesOrderBillingPlanItem(SalesOrder='{salesorder}',BillingPlan='{billingplan}',BillingPlanItem='{billingplanitem}')",
+        path=f"A_SalesOrderBillingPlanItem(SalesOrder='{so}',BillingPlan='{bp}',BillingPlanItem='{bpi}')",
         params=params,
         user_token=_token(),
     )
@@ -268,11 +361,12 @@ async def _list_headerpartner(
     inlinecount: Optional[str] = None,
     **_kwargs,
 ) -> str:
+    top, skip = _validate_pagination(top, skip)
     params: dict = {"$format": "json"}
     if filter:    params["$filter"] = filter
     if select:    params["$select"] = select
     if orderby:   params["$orderby"] = orderby
-    if top is not None: params["$top"] = str(min(top, 100))
+    if top is not None: params["$top"] = str(top)
     if skip is not None: params["$skip"] = str(skip)
     if expand:    params["$expand"] = expand
     if inlinecount: params["$inlinecount"] = inlinecount
@@ -294,9 +388,11 @@ async def _get_headerpartner(salesorder: str, partnerfunction: str, select: Opti
     params: dict = {"$format": "json"}
     if select: params["$select"] = select
     if expand: params["$expand"] = expand
+    so = _escape_odata_string(salesorder)
+    pf = _escape_odata_string(partnerfunction)
     return await call_odata(
         destination_name=_DEST,
-        path=f"A_SalesOrderHeaderPartner(SalesOrder='{salesorder}',PartnerFunction='{partnerfunction}')",
+        path=f"A_SalesOrderHeaderPartner(SalesOrder='{so}',PartnerFunction='{pf}')",
         params=params,
         user_token=_token(),
     )
@@ -340,11 +436,12 @@ async def _list_salesorderitem(
     inlinecount: Optional[str] = None,
     **_kwargs,
 ) -> str:
+    top, skip = _validate_pagination(top, skip)
     params: dict = {"$format": "json"}
     if filter:    params["$filter"] = filter
     if select:    params["$select"] = select
     if orderby:   params["$orderby"] = orderby
-    if top is not None: params["$top"] = str(min(top, 100))
+    if top is not None: params["$top"] = str(top)
     if skip is not None: params["$skip"] = str(skip)
     if expand:    params["$expand"] = expand
     if inlinecount: params["$inlinecount"] = inlinecount
@@ -366,9 +463,11 @@ async def _get_salesorderitem(salesorder: str, salesorderitem: str, select: Opti
     params: dict = {"$format": "json"}
     if select: params["$select"] = select
     if expand: params["$expand"] = expand
+    so = _escape_odata_string(salesorder)
+    soi = _escape_odata_string(salesorderitem)
     return await call_odata(
         destination_name=_DEST,
-        path=f"A_SalesOrderItem(SalesOrder='{salesorder}',SalesOrderItem='{salesorderitem}')",
+        path=f"A_SalesOrderItem(SalesOrder='{so}',SalesOrderItem='{soi}')",
         params=params,
         user_token=_token(),
     )
@@ -412,11 +511,12 @@ async def _list_scheduleline(
     inlinecount: Optional[str] = None,
     **_kwargs,
 ) -> str:
+    top, skip = _validate_pagination(top, skip)
     params: dict = {"$format": "json"}
     if filter:    params["$filter"] = filter
     if select:    params["$select"] = select
     if orderby:   params["$orderby"] = orderby
-    if top is not None: params["$top"] = str(min(top, 100))
+    if top is not None: params["$top"] = str(top)
     if skip is not None: params["$skip"] = str(skip)
     if expand:    params["$expand"] = expand
     if inlinecount: params["$inlinecount"] = inlinecount
@@ -439,9 +539,12 @@ async def _get_scheduleline(salesorder: str, salesorderitem: str, scheduleline: 
     params: dict = {"$format": "json"}
     if select: params["$select"] = select
     if expand: params["$expand"] = expand
+    so = _escape_odata_string(salesorder)
+    soi = _escape_odata_string(salesorderitem)
+    sl = _escape_odata_string(scheduleline)
     return await call_odata(
         destination_name=_DEST,
-        path=f"A_SalesOrderScheduleLine(SalesOrder='{salesorder}',SalesOrderItem='{salesorderitem}',ScheduleLine='{scheduleline}')",
+        path=f"A_SalesOrderScheduleLine(SalesOrder='{so}',SalesOrderItem='{soi}',ScheduleLine='{sl}')",
         params=params,
         user_token=_token(),
     )
@@ -489,8 +592,8 @@ def get_native_tools() -> list[StructuredTool]:
         StructuredTool(
             name="batch_for_api_sales_order_srv",
             description=(
-                "Execute multiple OData read operations in a single batch request. "
-                "Only GET (read) operations are permitted."
+                "NOT SUPPORTED: OData V2 multipart $batch is not implemented. "
+                "Use the individual entity tools to retrieve data instead."
             ),
             args_schema=_BatchInput,
             coroutine=_batch,

@@ -21,9 +21,12 @@ anyway for OnPremise destinations).
 
 Authentication
 --------------
-`ConsumptionOptions(user_token=<jwt>)` is passed to `get_destination()` so the
-Destination Service performs OAuth2UserTokenExchange / JWT Bearer token exchange
-on behalf of the calling user. No credentials are hardcoded.
+The user JWT is forwarded as `Authorization: Bearer <jwt>` on the proxy request
+via `proxy_dest.set_header(TransparentProxyHeader.AUTHORIZATION, ...)`. The
+Transparent Proxy uses this for PrincipalPropagation / OAuth2UserTokenExchange.
+`ConsumptionOptions` is NOT used — it is silently discarded by the SDK when
+`proxy_enabled=True` (confirmed from sap-cloud-sdk 0.62.0 client.py source).
+No credentials are hardcoded.
 
 Local Testing
 -------------

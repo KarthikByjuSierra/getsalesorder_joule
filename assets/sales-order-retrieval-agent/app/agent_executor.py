@@ -51,7 +51,8 @@ class AgentExecutor(A2AAgentExecutor):
             await event_queue.enqueue_event(task)
 
         # Load native S/4HANA OData tools — no MCP server or ORD ID resolution required.
-        # Authentication is handled at call-time via BTP destination "s43".
+        # Authentication is handled at call-time via BTP destination "S43" through the
+        # BTP Connectivity Transparent Proxy (create_client(use_default_proxy=True)).
         tools = []
         try:
             tools = get_native_tools()

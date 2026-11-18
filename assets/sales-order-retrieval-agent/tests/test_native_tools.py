@@ -112,12 +112,15 @@ async def test_get_metadata(native_tools):
 
 
 # ---------------------------------------------------------------------------
-# 3. Tool 2 — batch_for_api_sales_order_srv
+# 3. Tool 2 — batch_for_api_sales_order_srv (unsupported)
 # ---------------------------------------------------------------------------
 
-async def test_batch(native_tools):
-    result = await _invoke(native_tools["batch_for_api_sales_order_srv"])
-    assert result is not None and len(result) > 0
+async def test_batch_raises_tool_exception(native_tools):
+    """Batch tool is explicitly unsupported — must raise ToolException."""
+    from langchain_core.tools import ToolException
+    with pytest.raises(ToolException) as exc_info:
+        await _invoke(native_tools["batch_for_api_sales_order_srv"])
+    assert "not supported" in str(exc_info.value).lower()
 
 
 # ---------------------------------------------------------------------------
