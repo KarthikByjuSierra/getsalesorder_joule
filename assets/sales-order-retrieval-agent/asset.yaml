@@ -17,11 +17,6 @@ container:
   buildPath: .
   port: 5000
 
-requires:
-  - name: sap-s4-sales-order-srv-mcp-server
-    kind: mcp-server
-    ordId: customer.build:apiResource:sales-order-retrieval-3d781.sap-s4-sales-order-srv-mcp-server:v1
-
 probes:
   startup:
     path: /.well-known/agent.json

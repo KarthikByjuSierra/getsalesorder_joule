@@ -1,0 +1,13 @@
+{
+  "subaccount": [
+    {
+      "name": "s43",
+      "type": "HTTP",
+      "url": "https://s4hana-mock.example.com",
+      "proxyType": "OnPremise",
+      "authentication": "BasicAuthentication",
+      "description": "SAP S/4HANA On-Premise system (mock for local testing)"
+    }
+  ],
+  "instance": []
+}

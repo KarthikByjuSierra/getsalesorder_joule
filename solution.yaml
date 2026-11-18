@@ -8,4 +8,3 @@ metadata:
 
 assets:
   - ref: ./assets/sales-order-retrieval-agent/asset.yaml
-  - ref: ./assets/sap-s4-sales-order-srv-mcp-server/asset.yaml

@@ -19,8 +19,8 @@ from a2a.utils.errors import ServerError
 from agent import SampleAgent
 from datetime_tool import get_datetime_tool
 from load_skill_resources import get_load_skill_resource_tool
-from mcp_providers.agw import get_mcp_tools
 from prompt_injection_detector import wrap_tool
+from tools.sales_order_tools import get_native_tools
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +50,15 @@ class AgentExecutor(A2AAgentExecutor):
             task = new_task(context.message)
             await event_queue.enqueue_event(task)
 
-        # Load MCP tools — user token is read from context var set by JWTContextMiddleware
+        # Load native S/4HANA OData tools — no MCP server or ORD ID resolution required.
+        # Authentication is handled at call-time via BTP destination "s43".
         tools = []
         try:
-            tools = await get_mcp_tools()
+            tools = get_native_tools()
             if not tools:
-                logger.warning("No tools returned from Agent Gateway")
+                logger.warning("No native tools returned from get_native_tools()")
         except Exception as e:
-            logger.error(f"Failed to load tools from Agent Gateway: {e}")
+            logger.error(f"Failed to load native tools: {e}")
 
         tools = [*tools, *self.skill_tools]
 
