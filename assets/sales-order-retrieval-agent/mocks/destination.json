@@ -1,7 +1,7 @@
 {
   "subaccount": [
     {
-      "name": "s43",
+      "name": "S43",
       "type": "HTTP",
       "url": "https://s4hana-mock.example.com",
       "proxyType": "OnPremise",

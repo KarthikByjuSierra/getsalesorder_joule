@@ -13,6 +13,20 @@ provides:
       kind: a2a
       ordId: customer.build:apiResource:sales-order-retrieval-3d781.sales-order-retrieval-agent:v1
 
+requires:
+  - name: default
+    kind: platform-service
+    service: destination
+    plan: lite
+    parameters:
+      existing-service-instance-name: destination-service
+  - name: btp-connectivity
+    kind: platform-service
+    service: connectivity
+    plan: lite
+    parameters:
+      existing-service-instance-name: btp-connectivity
+
 container:
   buildPath: .
   port: 5000

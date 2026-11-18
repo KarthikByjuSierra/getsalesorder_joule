@@ -396,7 +396,7 @@ async def test_odata_params_filter_passed_correctly(native_tools):
 
     assert captured["path"] == "A_SalesOrder"
     assert captured["params"]["$filter"] == "SalesOrderType eq 'OR'"
-    assert captured["destination_name"] == "s43"
+    assert captured["destination_name"] == "S43"
 
 
 async def test_odata_key_path_built_correctly(native_tools):
@@ -416,7 +416,7 @@ async def test_odata_key_path_built_correctly(native_tools):
         )
 
     assert captured["path"] == "A_SalesOrder('1234567')"
-    assert captured["destination_name"] == "s43"
+    assert captured["destination_name"] == "S43"
 
 
 async def test_odata_count_path_correct(native_tools):
@@ -454,3 +454,203 @@ async def test_schedule_line_composite_key_path(native_tools):
         )
 
     assert captured["path"] == "A_SalesOrderScheduleLine(SalesOrder='10',SalesOrderItem='20',ScheduleLine='1')"
+
+
+# ---------------------------------------------------------------------------
+# 20. Transparent Proxy tests (s4_odata_client._sync_odata_get / call_odata)
+# ---------------------------------------------------------------------------
+
+class _FakeProxyDest:
+    """Minimal stand-in for TransparentProxyDestination."""
+    def __init__(self, url="http://conn-proxy.ns", dest_name="S43"):
+        self.url = url
+        self.headers = {"X-destination-name": dest_name}
+
+
+def _make_mock_response(text: str = '{"d":{"results":[]}}', status: int = 200):
+    """Create a mock requests.Response."""
+    from unittest.mock import MagicMock
+    resp = MagicMock()
+    resp.status_code = status
+    resp.text = text
+    resp.raise_for_status = MagicMock()
+    if status >= 400:
+        import requests as _r
+        http_err = _r.exceptions.HTTPError(response=resp)
+        resp.raise_for_status.side_effect = http_err
+    return resp
+
+
+def test_proxy_configured_and_destination_resolved(monkeypatch):
+    """Happy path: proxy env var set, destination resolved, GET succeeds."""
+    from unittest.mock import patch, MagicMock
+    import tools.s4_odata_client as client_mod
+
+    monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "conn-proxy.namespace")
+
+    mock_dest = _FakeProxyDest()
+    mock_sdk_client = MagicMock()
+    mock_sdk_client.get_destination.return_value = mock_dest
+
+    with patch.object(client_mod, "create_client", return_value=mock_sdk_client), \
+         patch.object(client_mod._requests, "get", return_value=_make_mock_response()) as mock_get:
+
+        result = client_mod._sync_odata_get("S43", "A_SalesOrder", {}, None)
+
+    assert result == '{"d":{"results":[]}}'
+    mock_sdk_client.get_destination.assert_called_once()
+    mock_get.assert_called_once()
+
+
+def test_proxy_env_var_missing_raises_tool_exception(monkeypatch):
+    """If APPFND_CONHOS_TRANSP_PROXY is absent, ToolException with diagnostic message."""
+    from langchain_core.tools import ToolException
+    import tools.s4_odata_client as client_mod
+
+    monkeypatch.delenv("APPFND_CONHOS_TRANSP_PROXY", raising=False)
+
+    with pytest.raises(ToolException) as exc_info:
+        client_mod._sync_odata_get("S43", "A_SalesOrder", {}, None)
+
+    msg = str(exc_info.value)
+    assert "APPFND_CONHOS_TRANSP_PROXY" in msg
+    assert "missing" in msg.lower() or "not configured" in msg.lower()
+
+
+def test_x_destination_name_header_present(monkeypatch):
+    """The X-destination-name header must be present in the outbound request."""
+    from unittest.mock import patch, MagicMock, call
+    import tools.s4_odata_client as client_mod
+
+    monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "conn-proxy.namespace")
+
+    mock_dest = _FakeProxyDest(dest_name="S43")
+    mock_sdk_client = MagicMock()
+    mock_sdk_client.get_destination.return_value = mock_dest
+
+    with patch.object(client_mod, "create_client", return_value=mock_sdk_client), \
+         patch.object(client_mod._requests, "get", return_value=_make_mock_response()) as mock_get:
+
+        client_mod._sync_odata_get("S43", "A_SalesOrder", {}, None)
+
+    _, kwargs = mock_get.call_args
+    sent_headers = kwargs.get("headers", {})
+    assert "X-destination-name" in sent_headers
+    assert sent_headers["X-destination-name"] == "S43"
+
+
+def test_user_token_propagated_to_sdk(monkeypatch):
+    """ConsumptionOptions(user_token=...) must be passed to get_destination()."""
+    from unittest.mock import patch, MagicMock
+    import tools.s4_odata_client as client_mod
+    from sap_cloud_sdk.destination import ConsumptionOptions
+
+    monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "conn-proxy.namespace")
+
+    mock_dest = _FakeProxyDest()
+    mock_sdk_client = MagicMock()
+    mock_sdk_client.get_destination.return_value = mock_dest
+
+    test_token = "eyJhbGciOiJSUzI1NiJ9.test.token"
+
+    with patch.object(client_mod, "create_client", return_value=mock_sdk_client), \
+         patch.object(client_mod._requests, "get", return_value=_make_mock_response()):
+
+        client_mod._sync_odata_get("S43", "A_SalesOrder", {}, test_token)
+
+    _, kwargs = mock_sdk_client.get_destination.call_args
+    options = kwargs.get("options")
+    assert options is not None, "ConsumptionOptions must be passed when user_token is set"
+    assert isinstance(options, ConsumptionOptions)
+    assert options.user_token == test_token
+
+
+def test_odata_query_params_forwarded(monkeypatch):
+    """OData query params must be forwarded as URL query string."""
+    from unittest.mock import patch, MagicMock
+    import tools.s4_odata_client as client_mod
+
+    monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "conn-proxy.namespace")
+
+    mock_dest = _FakeProxyDest()
+    mock_sdk_client = MagicMock()
+    mock_sdk_client.get_destination.return_value = mock_dest
+
+    params = {"$filter": "SalesOrderType eq 'OR'", "$top": "10", "$select": "SalesOrder"}
+
+    with patch.object(client_mod, "create_client", return_value=mock_sdk_client), \
+         patch.object(client_mod._requests, "get", return_value=_make_mock_response()) as mock_get:
+
+        client_mod._sync_odata_get("S43", "A_SalesOrder", params, None)
+
+    _, kwargs = mock_get.call_args
+    sent_params = kwargs.get("params", {})
+    assert sent_params["$filter"] == "SalesOrderType eq 'OR'"
+    assert sent_params["$top"] == "10"
+    assert sent_params["$select"] == "SalesOrder"
+
+
+def test_http_error_raises_tool_exception(monkeypatch):
+    """HTTP 404 from proxy must raise ToolException with status info."""
+    from unittest.mock import patch, MagicMock
+    from langchain_core.tools import ToolException
+    import tools.s4_odata_client as client_mod
+
+    monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "conn-proxy.namespace")
+
+    mock_dest = _FakeProxyDest()
+    mock_sdk_client = MagicMock()
+    mock_sdk_client.get_destination.return_value = mock_dest
+
+    with patch.object(client_mod, "create_client", return_value=mock_sdk_client), \
+         patch.object(client_mod._requests, "get", return_value=_make_mock_response(status=404)):
+
+        with pytest.raises(ToolException) as exc_info:
+            client_mod._sync_odata_get("S43", "A_SalesOrder", {}, None)
+
+    assert "404" in str(exc_info.value) or "HTTP" in str(exc_info.value)
+
+
+def test_timeout_raises_tool_exception(monkeypatch):
+    """Timeout must raise ToolException with timeout info."""
+    from unittest.mock import patch, MagicMock
+    from langchain_core.tools import ToolException
+    import tools.s4_odata_client as client_mod
+    import requests as _r
+
+    monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "conn-proxy.namespace")
+
+    mock_dest = _FakeProxyDest()
+    mock_sdk_client = MagicMock()
+    mock_sdk_client.get_destination.return_value = mock_dest
+
+    with patch.object(client_mod, "create_client", return_value=mock_sdk_client), \
+         patch.object(client_mod._requests, "get", side_effect=_r.exceptions.Timeout()):
+
+        with pytest.raises(ToolException) as exc_info:
+            client_mod._sync_odata_get("S43", "A_SalesOrder", {}, None)
+
+    assert "timed out" in str(exc_info.value).lower()
+
+
+def test_connection_error_raises_tool_exception(monkeypatch):
+    """ConnectionError must raise ToolException with proxy address info."""
+    from unittest.mock import patch, MagicMock
+    from langchain_core.tools import ToolException
+    import tools.s4_odata_client as client_mod
+    import requests as _r
+
+    monkeypatch.setenv("APPFND_CONHOS_TRANSP_PROXY", "conn-proxy.namespace")
+
+    mock_dest = _FakeProxyDest(url="http://conn-proxy.namespace")
+    mock_sdk_client = MagicMock()
+    mock_sdk_client.get_destination.return_value = mock_dest
+
+    with patch.object(client_mod, "create_client", return_value=mock_sdk_client), \
+         patch.object(client_mod._requests, "get", side_effect=_r.exceptions.ConnectionError("refused")):
+
+        with pytest.raises(ToolException) as exc_info:
+            client_mod._sync_odata_get("S43", "A_SalesOrder", {}, None)
+
+    msg = str(exc_info.value)
+    assert "conn-proxy" in msg or "Transparent Proxy" in msg or "connect" in msg.lower()

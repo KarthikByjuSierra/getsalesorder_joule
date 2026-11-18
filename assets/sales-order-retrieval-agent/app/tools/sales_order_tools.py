@@ -52,7 +52,7 @@ from tools.s4_odata_client import call_odata
 
 logger = logging.getLogger(__name__)
 
-_DEST = "s43"
+_DEST = "S43"
 
 
 def _token() -> str | None:
